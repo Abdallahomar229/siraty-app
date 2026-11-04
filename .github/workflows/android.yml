@@ -1,0 +1,68 @@
+name: Build Android (Siraty)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - siraty-src.zip
+      - .github/workflows/android.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack source
+        run: |
+          rm -rf work
+          mkdir work
+          unzip -q siraty-src.zip -d work
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Build app (web)
+        working-directory: work
+        run: |
+          npm ci --no-audit --no-fund
+          VITE_SHOW_TEST_MODE=false npx vite build --outDir android/app/src/main/assets/www --emptyOutDir
+
+      - name: Build AAB and APK (unsigned)
+        working-directory: work/android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace bundleRelease assembleRelease
+
+      - name: Publish to builds branch
+        run: |
+          mkdir -p out
+          cp work/android/app/build/outputs/bundle/release/*.aab out/siraty-unsigned.aab
+          cp work/android/app/build/outputs/apk/release/*.apk out/siraty-unsigned.apk
+          echo "${{ github.run_number }}" > out/version-code.txt
+          cd out
+          git init -q -b builds
+          git config user.name "siraty-ci"
+          git config user.email "siraty-ci@users.noreply.github.com"
+          git add -A
+          git commit -q -m "build ${{ github.run_number }}"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" builds
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: siraty-unsigned-${{ github.run_number }}
+          path: out/*
