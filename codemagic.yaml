@@ -1,0 +1,49 @@
+# Codemagic — بيبني نسخة الآيفون من «سيرتي» على ماك في السحابة ويرفعها على App Store Connect.
+# الكود كله جوه siraty-src.zip (نفس الملف اللي بيبني نسخة أندرويد على GitHub Actions).
+workflows:
+  ios-release:
+    name: iOS → App Store Connect
+    max_build_duration: 45
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: MawthoqPost ASC
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.siraty.cv
+      vars:
+        MARKETING_VERSION: "1.0.0"
+        VITE_SHOW_TEST_MODE: "false"
+        VITE_REVIEW_UNLOCK: "false"
+      node: 22
+      xcode: latest
+    triggering:
+      events: []
+    scripts:
+      - name: Unpack source
+        script: |
+          rm -rf work && mkdir work
+          unzip -q siraty-src.zip -d work
+      - name: Build app (web)
+        script: |
+          cd work
+          npm ci --no-audit --no-fund
+          VITE_APP_VERSION="$MARKETING_VERSION" npx vite build --outDir ios/web --emptyOutDir
+      - name: Generate Xcode project
+        script: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          cd work/ios
+          sed -i '' -E "s/CURRENT_PROJECT_VERSION: \"[0-9]+\"/CURRENT_PROJECT_VERSION: \"$BUILD_NUMBER\"/" project.yml
+          sed -i '' -E "s/MARKETING_VERSION: \"[0-9.]+\"/MARKETING_VERSION: \"$MARKETING_VERSION\"/" project.yml
+          xcodegen generate
+      - name: Use signing profiles
+        script: xcode-project use-profiles --project work/ios/Siraty.xcodeproj
+      - name: Build IPA
+        script: xcode-project build-ipa --project work/ios/Siraty.xcodeproj --scheme Siraty
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
